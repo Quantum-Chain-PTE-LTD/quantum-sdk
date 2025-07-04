@@ -17,30 +17,81 @@ A node.js SDK for interacting with the Quantum Chain network using WebAssembly f
 
 ```bash
 npm install @quantum_chain/sdk
+npm install bip39  # Required for mnemonic functionality
 ```
 
 ## Quick Start
 
+### Complete Transaction Example with Mnemonic
+
 ```javascript
-const QuantumChainSDK = require("@quantum_chain/sdk");
+const path = require('path');
+const fs = require('fs');
+const QuantumChainSDK = require('@quantum_chain/sdk');
+const bip39 = require('bip39');
 
 async function main() {
-  // Initialize the SDK
-  const sdk = new QuantumChainSDK({
-    rpcUrl: "https://rpc.quantumchain.network", // Replace with your RPC URL
-    wasmPath: "./wasm/qc.wasm", // Path to WASM file (optional)
-  });
+    // Define the mnemonic phrase (use your own secure mnemonic)
+    const mnemonic = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+    
+    // Validate the mnemonic
+    if (!bip39.validateMnemonic(mnemonic)) {
+        throw new Error('Invalid mnemonic phrase');
+    }
+    
+    // Generate seed from mnemonic (BIP39 standard)
+    const seed = bip39.mnemonicToSeedSync(mnemonic);
+    console.log('BIP39 Seed generated');
+    
+    // Extract first 32 bytes for account derivation
+    const first32Bytes = seed.slice(0, 32);
+    const seedHex = first32Bytes.toString('hex');
+    console.log('Seed length:', first32Bytes.length, 'bytes');
+    
+    // Initialize the SDK
+    const sdk = new QuantumChainSDK({ 
+        rpcUrl: 'https://rpc.quantumchain.network' // Replace with your RPC URL
+    });
+    await sdk.initialize();
 
-  // Initialize the WebAssembly module
-  await sdk.initialize();
+    // Load account from seed
+    const account = await sdk.loadAccountFromSeed(seedHex);
+    console.log('Account loaded from seed');
 
-  // Create a new account
-  const account = await sdk.createAccount("your-secure-passphrase");
-  console.log("New account created:", account);
+    // Get the account address
+    const address = await sdk.getAddress();
+    console.log('Account Address:', address);
 
-  // Get the account address
-  const address = await sdk.getAddress();
-  console.log("Account address:", address);
+    // Prepare transaction details
+    const nonceHex = await sdk.getTransactionCount(address);
+    const nonce = parseInt(nonceHex, 16);
+
+    const gasPriceHex = await sdk.getGasPrice();
+    const gasPrice = parseInt(gasPriceHex, 16);
+
+    const toAddress = '0x742d35cc6634c0532925a3b8d0c3b3c3b3c3b3c3'; // Replace with recipient
+    const amount = '1000000000000000000'; // 1 QC in Qwei
+
+    const gasLimitHex = await sdk.estimateGas(address, toAddress, '0x' + BigInt(amount).toString(16));
+    const gasLimit = parseInt(gasLimitHex, 16);
+
+    // Sign the transaction
+    const signedTx = await sdk.signTransaction(nonce, gasPrice, gasLimit, toAddress, amount);
+    console.log('Transaction signed successfully');
+
+    // Send the signed transaction
+    const txHash = await sdk.sendRawTransaction(signedTx);
+    console.log('Transaction Hash:', txHash);
+
+    // Wait for the transaction receipt
+    setTimeout(async () => {
+        try {
+            const receipt = await sdk.getTransactionReceipt(txHash);
+            console.log('Transaction confirmed:', receipt.status);
+        } catch (error) {
+            console.log('Transaction still pending or failed');
+        }
+    }, 30000);
 }
 
 main().catch(console.error);
@@ -106,6 +157,45 @@ Loads and decrypts an existing Quantum Chain account from a keyfile.
 ```javascript
 const keyfileContent = fs.readFileSync("path/to/keyfile.json", "utf8");
 const account = await sdk.loadAccount(keyfileContent, "my-passphrase");
+```
+
+#### `loadAccountFromSeed(seedHex)`
+
+Loads a Quantum Chain account from a hexadecimal seed string. The seed should be exactly 32 bytes (64 hex characters).
+
+**Parameters:**
+
+- `seedHex` (string): The seed as a hexadecimal string (64 characters)
+
+**Returns:** `Promise<any>` - The loaded account object
+
+**Example:**
+
+```javascript
+const seedHex = "a1b2c3d4e5f6789012345678901234567890123456789012345678901234567890";
+const account = await sdk.loadAccountFromSeed(seedHex);
+```
+
+#### `loadAccountFromMnemonic(mnemonic)`
+
+Loads a Quantum Chain account from a BIP39 mnemonic phrase. The mnemonic is converted to a seed using the BIP39 standard.
+
+**Parameters:**
+
+- `mnemonic` (string): A valid BIP39 mnemonic phrase (12, 15, 18, 21, or 24 words)
+
+**Returns:** `Promise<any>` - The loaded account object
+
+**Example:**
+
+```javascript
+const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+const account = await sdk.loadAccountFromMnemonic(mnemonic);
+```
+
+**Note:** This method requires the `bip39` package to be installed:
+```bash
+npm install bip39
 ```
 
 #### `getAddress()`
@@ -332,6 +422,85 @@ async function createAndUseAccount() {
 createAndUseAccount();
 ```
 
+### Working with Mnemonic Phrases
+
+```javascript
+const QuantumChainSDK = require("@quantum_chain/sdk");
+const bip39 = require("bip39");
+
+async function workWithMnemonic() {
+  try {
+    const sdk = new QuantumChainSDK({
+      rpcUrl: "https://rpc.quantumchain.network"
+    });
+    await sdk.initialize();
+
+    // Generate a new mnemonic phrase
+    const mnemonic = bip39.generateMnemonic();
+    console.log("Generated mnemonic:", mnemonic);
+
+    // Validate the mnemonic
+    const isValid = bip39.validateMnemonic(mnemonic);
+    console.log("Mnemonic is valid:", isValid);
+
+    // Load account directly from mnemonic
+    const account = await sdk.loadAccountFromMnemonic(mnemonic);
+    console.log("Account loaded from mnemonic");
+
+    // Get the address
+    const address = await sdk.getAddress();
+    console.log("Account address:", address);
+
+    // Alternative: Convert mnemonic to seed manually
+    const seed = bip39.mnemonicToSeedSync(mnemonic);
+    const seedHex = seed.slice(0, 32).toString('hex');
+    console.log("Seed (32 bytes hex):", seedHex);
+
+    // Load account from seed
+    const accountFromSeed = await sdk.loadAccountFromSeed(seedHex);
+    console.log("Account loaded from seed");
+  } catch (error) {
+    console.error("Error working with mnemonic:", error);
+  }
+}
+
+workWithMnemonic();
+```
+
+### Working with Custom Seeds
+
+```javascript
+const QuantumChainSDK = require("@quantum_chain/sdk");
+const crypto = require("crypto");
+
+async function workWithCustomSeed() {
+  try {
+    const sdk = new QuantumChainSDK();
+    await sdk.initialize();
+
+    // Generate a random 32-byte seed
+    const randomSeed = crypto.randomBytes(32);
+    const seedHex = randomSeed.toString('hex');
+    console.log("Generated seed:", seedHex);
+
+    // Load account from the seed
+    const account = await sdk.loadAccountFromSeed(seedHex);
+    console.log("Account loaded from custom seed");
+
+    const address = await sdk.getAddress();
+    console.log("Account address:", address);
+
+    // Store the seed securely for future use
+    // WARNING: Store seeds securely! This is just an example
+    // fs.writeFileSync('./seed.txt', seedHex);
+  } catch (error) {
+    console.error("Error working with custom seed:", error);
+  }
+}
+
+workWithCustomSeed();
+```
+
 ## Configuration
 
 ### RPC Configuration
@@ -378,6 +547,7 @@ try {
 - Node.js 14.0.0 or higher
 - The WebAssembly files (`qc.wasm` and `wasm_exec.js`) must be available
 - Access to a Quantum Chain RPC endpoint
+- `bip39` package (for mnemonic functionality): `npm install bip39`
 
 ## File Structure
 
